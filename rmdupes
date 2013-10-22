@@ -101,6 +101,6 @@ sub usage {
     warn $err if $err;
 
     die <<_USAGE_;
-$0 [--symlinks] src dest
+$0 [--verbose] [--debug] [--dry-run] [--symlinks] src dest
 _USAGE_
 }
