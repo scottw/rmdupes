@@ -1,0 +1,106 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+## Scott Wiersdorf
+## Created: Tue Oct 22 15:10:54 MDT 2013
+
+## remove duplicate files from a hierarchy
+
+## usage: rmdupes src dest
+##
+## any files in src that also exist in dest will be removed from dest
+
+use Getopt::Long;
+use Fcntl ':mode';
+use Digest::SHA;
+
+my %opt = ();
+GetOptions(\%opt,
+           'verbose',   ## print moar
+           'debug',     ## even moar
+           'dry-run',   ## don't unlink the duplicate
+           'symlinks',  ## remove symlinks if they point to the same thing
+           )
+  or usage();
+
+s{/+$}{} for @ARGV;  ## clean up trailing slashes
+crawl_down(@ARGV);
+
+exit;
+
+sub crawl_down {
+    my $src = shift;
+    my $dest = shift;
+
+    opendir my $sdir, $src
+      or do {
+          warn "Unable to open '$src': $!\n";
+          return;
+      };
+
+    opendir my $ddir, $dest
+      or do {
+          warn "Unable to open '$dest': $!\n";
+          return;
+      };
+
+    my @sentries = grep { ! /^\.\.?$/ } readdir $sdir;
+    closedir $sdir;
+
+    for my $entry ( @sentries ) {
+        my @sstat = lstat("$src/$entry");
+        my @dstat = lstat("$dest/$entry");
+
+        ## no dest file
+        next unless scalar(@dstat);
+
+        ## make sure we're comparing apples
+        next unless S_IFMT($sstat[2]) == S_IFMT($dstat[2]);
+
+        ## symlink
+        if (S_ISLNK($sstat[2])) {
+            next unless $opt{symlinks};
+            next unless readlink("$src/$entry") eq readlink("$dest/$entry")
+        }
+
+        ## directory
+        if (S_ISDIR($sstat[2])) {
+            crawl_down("$src/$entry", "$dest/$entry");
+            next;
+        }
+
+        ## no pipes, etc.: only regular files here
+        next unless S_ISREG($sstat[2]);
+
+        ## hash 'em
+        my $src_digest  = Digest::SHA->new->addfile("$src/$entry");
+        my $dest_digest = Digest::SHA->new->addfile("$dest/$entry");
+
+        unless ($src_digest->digest eq $dest_digest->digest) {
+            print STDERR "keeping non-duplicate $dest/$entry\n" if $opt{debug};
+            next;
+        }
+
+        print STDERR "unlinking duplicate $dest/$entry\n" if $opt{verbose};
+
+        unless ($opt{'dry-run'}) {
+            unlink "$dest/$entry"
+              or do {
+                  warn "Unable to remove '$dest/$entry': $!\n";
+              };
+        }
+    }
+}
+
+exit;
+
+sub usage {
+    my $err = shift;
+
+    warn $err if $err;
+
+    die <<_USAGE_;
+$0 [--symlinks] src dest
+_USAGE_
+}
